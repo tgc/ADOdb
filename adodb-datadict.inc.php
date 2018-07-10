@@ -182,6 +182,7 @@ class ADODB_DataDict {
 	var $invalidResizeTypes4 = array('CLOB','BLOB','TEXT','DATE','TIME'); // for changetablesql
 	var $blobSize = 100; 	/// any varchar/char field this size or greater is treated as a blob
 							/// in other words, we use a text area for editting.
+	var $charSet; // Added 2004-06-20 by Kevin Jamieson (https://pkp.sfu.ca/)
 
 	function GetCommentSQL($table,$col)
 	{
@@ -517,11 +518,15 @@ class ADODB_DataDict {
 	{
 		$tabname = $this->TableName ($tabname);
 		if ($flds) {
-			list($lines,$pkey,$idxs) = $this->_GenFields($flds);
+			// Avoid use of SERIAL for existing columns, 2014-04-14
+			// by AS
+			list($lines,$pkey,$idxs) = $this->_GenFields($flds, false, false);
 			// genfields can return FALSE at times
 			if ($lines == null) $lines = array();
 			$first  = current($lines);
 			list(,$column_def) = preg_split("/[\t ]+/",$first,2);
+		} else {
+			$column_def = '';
 		}
 		return array(sprintf($this->renameColumn,$tabname,$this->NameQuote($oldcolumn),$this->NameQuote($newcolumn),$column_def));
 	}
@@ -594,7 +599,7 @@ class ADODB_DataDict {
 
 
 
-	function _GenFields($flds,$widespacing=false)
+	function _GenFields($flds,$widespacing=false,$allowSerial=true)
 	{
 		if (is_string($flds)) {
 			$padding = '     ';
@@ -683,7 +688,9 @@ class ADODB_DataDict {
 								break;
 				case 'UNSIGNED': $funsigned = true; break;
 				case 'AUTOINCREMENT':
-				case 'AUTO':	$fautoinc = true; $fnotnull = true; break;
+				case 'AUTO':	// Serial type (psql) not allowed in ALTER TABLE statements (2014-04-14 AS)
+						if ($allowSerial) $fautoinc = true;
+						$fnotnull = true; break;
 				case 'KEY':
                 // a primary key col can be non unique in itself (if key spans many cols...)
 				case 'PRIMARY':	$fprimary = $v; $fnotnull = true; /*$funiqueindex = true;*/ break;
@@ -959,6 +966,8 @@ class ADODB_DataDict {
 			return $this->CreateTableSQL($tablename, $flds, $tableoptions);
 		}
 
+		$tableflds = $flds;
+		/* #2343: Null / Not Null column flag changes not respected by this code.
 		if (is_array($flds)) {
 		// Cycle through the update fields, comparing
 		// existing fields to fields to update.
@@ -994,16 +1003,21 @@ class ADODB_DataDict {
 				}
 			}
 			$flds = $holdflds;
-		}
+		} */
 
 
 		// already exists, alter table instead
-		list($lines,$pkey,$idxs) = $this->_GenFields($flds);
+		// (Avoid use of SERIAL when altering existing fields for psql,
+		// 2014-04-14 by AS)
+		list($lines,$pkey,$idxs) = $this->_GenFields($flds, false, false);
 		// genfields can return FALSE at times
 		if ($lines == null) $lines = array();
 		$alter = 'ALTER TABLE ' . $this->TableName($tablename);
 		$sql = array();
+		$addSql = array();
+		$recreate = false;
 
+		// FIXME 2005-08-01 KJ - Warning, horrible kludge ahead for DBMSs that can't alter column types
 		foreach ( $lines as $id => $v ) {
 			if ( isset($cols[$id]) && is_object($cols[$id]) ) {
 
@@ -1011,15 +1025,25 @@ class ADODB_DataDict {
 
 				//  We are trying to change the size of the field, if not allowed, simply ignore the request.
 				// $flds[1] holds the type, $flds[2] holds the size -postnuke addition
+/* #2343: Null / Not Null column flag changes not respected by this code.
 				if ($flds && in_array(strtoupper(substr($flds[0][1],0,4)),$this->invalidResizeTypes4)
 				 && (isset($flds[0][2]) && is_numeric($flds[0][2]))) {
 					if ($this->debug) ADOConnection::outp(sprintf("<h3>%s cannot be changed to %s currently</h3>", $flds[0][0], $flds[0][1]));
 					#echo "<h3>$this->alterCol cannot be changed to $flds currently</h3>";
 					continue;
 	 			}
-				$sql[] = $alter . $this->alterCol . ' ' . $v;
+*/
+				$alter = $this->AlterColumnSQL($tablename, array($id => $tableflds[$id]));
+				if (empty($alter)) {
+					$recreate = true;
+				} else {
+					$sql[] = $alter;
+				}
 			} else {
-				$sql[] = $alter . $this->addCol . ' ' . $v;
+				$add = $this->AddColumnSQL($tablename, array($id => $tableflds[$id]));;
+				unset($tableflds[$id]);
+				$sql[] = $add;
+				$addSql[] = $add;
 			}
 		}
 
@@ -1028,6 +1052,28 @@ class ADODB_DataDict {
 			    if ( !isset($lines[$id]) )
 					$sql[] = $alter . $this->dropCol . ' ' . $v->name;
 		}
+		if ($recreate) {
+			$sql = $this->AlterColumnSQL($tablename, false, $tableflds, $tableoptions);
+			$sql[] = $addSql;
+		}
 		return $sql;
+	}
+
+	// Functions for managing the database character encoding
+	// (for CREATE DATABASE, CREATE TABLE, etc.)
+	// Added 2004-06-20 by Kevin Jamieson (https://pkp.sfu.ca/)
+	function GetCharSet()
+	{
+		if (!$this->charSet) {
+			return false;
+		} else {
+			return $this->charSet;
+		}
+	}
+
+	// SetCharSet - switch the client encoding
+	function SetCharSet($charset_name)
+	{
+		$this->charSet = $charset_name;
 	}
 } // class

@@ -96,8 +96,8 @@ class ADODB_postgres64 extends ADOConnection{
 	var $hasAffectedRows = true;
 	var $hasLimit = false;	// set to true for pgsql 7 only. support pgsql/mysql SELECT * FROM TABLE LIMIT 10
 	// below suggested by Freek Dijkstra
-	var $true = 'TRUE';		// string that represents TRUE for a database
-	var $false = 'FALSE';		// string that represents FALSE for a database
+	var $true = '1';		// string that represents TRUE for a database
+	var $false = '0';		// string that represents FALSE for a database
 	var $fmtDate = "'Y-m-d'";	// used by DBDate() as the default date format used by the database
 	var $fmtTimeStamp = "'Y-m-d H:i:s'"; // used by DBTimeStamp as the default timestamp fmt.
 	var $hasMoveFirst = true;
@@ -144,30 +144,43 @@ class ADODB_postgres64 extends ADOConnection{
 		return " coalesce($field, $ifNull) ";
 	}
 
-	// get the last id - never tested
-	function pg_insert_id($tablename,$fieldname)
-	{
-		$result=pg_query($this->_connectionID, 'SELECT last_value FROM '. $tablename .'_'. $fieldname .'_seq');
-		if ($result) {
-			$arr = @pg_fetch_row($result,0);
-			pg_free_result($result);
-			if (isset($arr[0])) return $arr[0];
-		}
-		return false;
-	}
-
 	/**
-	 * Warning from http://www.php.net/manual/function.pg-getlastoid.php:
-	 * Using a OID as a unique identifier is not generally wise.
-	 * Unless you are very careful, you might end up with a tuple having
-	 * a different OID if a database must be reloaded.
+	 * Get the last inserted ID for the specified table and column.
+	 * @param $table string Optional table name
+	 * @param $id string Optional column name
 	 */
-	function _insertid($table,$column)
-	{
-		if (!is_resource($this->_resultid) || get_resource_type($this->_resultid) !== 'pgsql result') return false;
-		$oid = pg_getlastoid($this->_resultid);
-		// to really return the id, we need the table and column-name, else we can only return the oid != id
-		return empty($table) || empty($column) ? $oid : $this->GetOne("SELECT $column FROM $table WHERE oid=".(int)$oid);
+	function _insertid($table,$column) {
+		// If no table is specified, we can use LASTVAL()
+		if ($table === '') {
+			$result = pg_exec('SELECT LASTVAL()');
+			$row = pg_fetch_row($result, 0);
+			return $row[0];
+		}
+
+		// If this is PostgreSQL >= 8.0 and a column is specified, use pg_get_serial_sequence
+		$info = $this->ServerInfo();
+		if ($column !== '' && $info['version'] >= 8.0) {
+			$result = pg_exec("SELECT CURRVAL(pg_get_serial_sequence('$table', '$column'))");
+			$row = pg_fetch_row($result, 0);
+			return $row[0];
+		}
+
+		// Try to identify the sequence name from the column descriptions
+		foreach($this->MetaColumns($table) as $fld) {
+			if (
+				isset($fld->primary_key) && $fld->primary_key && $fld->has_default &&
+				preg_match("/nextval\('(?:[^']+\.)*([^']+)'::(text|regclass)\)/",$fld->default_value,$matches) &&
+				($fld->name == $column || $column == '') // Field matches specified value or none given
+			) {
+				$result = pg_exec('SELECT CURRVAL(\'' . $matches[1] . '\')');
+				$row = pg_fetch_row($result, 0);
+assert($row[0] != 0);
+				return $row[0];
+			}
+		}
+
+		// Unable to identify sequence to use.
+		assert(false);
 	}
 
 	function _affectedrows()
@@ -564,6 +577,9 @@ class ADODB_postgres64 extends ADOConnection{
 			$fld->name = $rs->fields[0];
 			$fld->type = $rs->fields[1];
 			$fld->max_length = $rs->fields[2];
+			$fld->primary_key = false;
+			$fld->auto_increment = false;
+			$fld->scale = null;
 			$fld->attnum = $rs->fields[6];
 
 			if ($fld->max_length <= 0) $fld->max_length = $rs->fields[3]-4;
