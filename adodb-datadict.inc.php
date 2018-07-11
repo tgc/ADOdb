@@ -1003,6 +1003,8 @@ class ADODB_DataDict {
 		if ($lines == null) $lines = array();
 		$alter = 'ALTER TABLE ' . $this->TableName($tablename);
 		$sql = array();
+		$addSql = array();
+		$recreate = false;
 
 		foreach ( $lines as $id => $v ) {
 			if ( isset($cols[$id]) && is_object($cols[$id]) ) {
@@ -1017,9 +1019,17 @@ class ADODB_DataDict {
 					#echo "<h3>$this->alterCol cannot be changed to $flds currently</h3>";
 					continue;
 	 			}
-				$sql[] = $alter . $this->alterCol . ' ' . $v;
+				$alter = $this->AlterColumnSQL($tablename, array($id => $tableflds[$id]));
+				if (empty($alter)) {
+					$recreate = true;
+				} else {
+					$sql[] = $alter;
+				}
 			} else {
-				$sql[] = $alter . $this->addCol . ' ' . $v;
+				$add = $this->AddColumnSQL($tablename, array($id => $tableflds[$id]));;
+				unset($tableflds[$id]);
+				$sql[] = $add;
+				$addSql[] = $add;
 			}
 		}
 
@@ -1027,6 +1037,10 @@ class ADODB_DataDict {
 			foreach ( $cols as $id => $v )
 			    if ( !isset($lines[$id]) )
 					$sql[] = $alter . $this->dropCol . ' ' . $v->name;
+		}
+		if ($recreate) {
+			$sql = $this->AlterColumnSQL($tablename, false, $tableflds, $tableoptions);
+			$sql[] = $addSql;
 		}
 		return $sql;
 	}
