@@ -56,21 +56,6 @@ class ADODB_mysql extends ADOConnection {
 		if (defined('ADODB_EXTENSION')) $this->rsPrefix .= 'ext_';
 	}
 
-	// Functions for managing the client encoding
-	// Added 2004-06-20 by Kevin Jamieson (https://pkp.sfu.ca/)
-	function GetCharSet()
-	{
-		if (function_exists('mysql_client_encoding')) {
-			$this->charSet = @mysql_client_encoding($this->_connectionID);
-		}
-
-		if (!$this->charSet) {
-			return false;
-		} else {
-			return $this->charSet;
-		}
-	}
-
 	// SetCharSet - switch the client encoding
 	function SetCharSet($charset_name)
 	{
