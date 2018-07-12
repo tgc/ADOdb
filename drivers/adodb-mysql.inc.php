@@ -56,6 +56,7 @@ class ADODB_mysql extends ADOConnection {
 		if (defined('ADODB_EXTENSION')) $this->rsPrefix .= 'ext_';
 	}
 
+
 	// SetCharSet - switch the client encoding
 	function SetCharSet($charset_name)
 	{
