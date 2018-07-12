@@ -1016,7 +1016,6 @@ class ADODB_DataDict {
 		$addSql = array();
 		$recreate = false;
 
-		// FIXME 2005-08-01 KJ - Warning, horrible kludge ahead for DBMSs that can't alter column types
 		foreach ( $lines as $id => $v ) {
 			if ( isset($cols[$id]) && is_object($cols[$id]) ) {
 
