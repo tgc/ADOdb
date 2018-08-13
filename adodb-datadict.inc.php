@@ -959,6 +959,7 @@ class ADODB_DataDict {
 			return $this->CreateTableSQL($tablename, $flds, $tableoptions);
 		}
 
+		$tableflds = $flds;
 		if (is_array($flds)) {
 		// Cycle through the update fields, comparing
 		// existing fields to fields to update.
